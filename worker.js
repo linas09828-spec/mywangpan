@@ -299,7 +299,8 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/")) {
-      if (!(await checkAuth(request, env)))
+      // 登录接口本身不需要鉴权，其余接口需要
+      if (url.pathname !== "/api/login" && !(await checkAuth(request, env)))
         return json({ ok: false, msg: "未登录" }, 401);
       return handleApi(request, env, url);
     }
