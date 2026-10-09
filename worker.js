@@ -9,7 +9,8 @@
  * 5. Worker 设置 → 域和路由 → 添加自定义域（你的域名，如 pan.example.com）
  * 6. 打开域名，输入密码登录，开始用
  *
- * 功能：密码登录 / 文件夹浏览 / 多文件上传 / 下载 / 删除 / 新建文件夹 / 限时分享链接
+ * 功能：密码登录 / 文件夹浏览 / 多文件上传 / 下载 / 删除 / 移动文件 / 新建文件夹 / 限时分享链接
+ * v2 新增：相册视图（图片缩略图网格 + 点击大图预览），原版功能不变
  */
 
 const COOKIE_NAME = "pan_auth";
@@ -86,19 +87,54 @@ button.primary:hover{background:#2f6fe0}button.danger{color:#f87171}
 #status{padding:10px 20px;color:#8a99b8;font-size:13px;min-height:36px}
 #drop{margin:0 20px 30px;max-width:960px;border:2px dashed #2c3a55;border-radius:12px;padding:30px;text-align:center;color:#8a99b8}
 #drop.over{border-color:#3b82f6;color:#7db4ff;background:#14203a}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;padding:6px 0 30px}
+.tile{position:relative;border-radius:10px;overflow:hidden;background:#16203a;border:1px solid #1b2540;cursor:pointer;aspect-ratio:1}
+.tile img{width:100%;height:100%;object-fit:cover;display:block}
+.tile .tname{position:absolute;left:0;right:0;bottom:0;padding:14px 6px 5px;font-size:11px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.7));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:50;flex-direction:column;padding:16px}
+#lightbox.show{display:flex}
+#lightbox img#lbimg{max-width:94vw;max-height:78vh;border-radius:8px}
+#lightbox .lb-name{color:#cbd5ea;font-size:13px;margin-bottom:10px;max-width:94vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#lightbox .lb-bar{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center}
 .empty{padding:40px;text-align:center;color:#5b6b8c}
+#movemodal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+#movemodal .box{background:#182032;border:1px solid #2c3a55;border-radius:12px;padding:20px;width:320px;max-height:70vh;overflow:auto}
+#movemodal .box h3{margin:0 0 12px;font-size:15px;word-break:break-all}
+#movemodal .frow{display:block;width:100%;text-align:left;margin:6px 0}
+#movemodal input{width:100%;box-sizing:border-box;padding:9px 12px;border-radius:8px;border:1px solid #2c3a55;background:#0f1420;color:#fff;margin:8px 0;font-size:14px}
+#movemodal .ops{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
 </style></head><body>
 <header><h1>🗂️ 我的网盘</h1>
 <button class="primary" onclick="document.getElementById('file').click()">⬆️ 上传文件</button>
 <input id="file" type="file" multiple style="display:none">
+<button id="viewbtn" onclick="toggleView()">🖼️ 相册视图</button>
 <button onclick="mkdir()">📁 新建文件夹</button>
 <button onclick="logout()" style="margin-left:auto">退出</button>
 </header>
 <div id="crumb"></div><div id="status"></div>
 <div id="drop">把文件拖到这里上传（或点左上角上传按钮）</div>
 <div id="list"></div>
+<div id="movemodal"><div class="box"><h3 id="movetitle">移动文件</h3><div id="movefolders"></div><input id="movepath" placeholder="或手动输入目标文件夹，如：照片/"><div class="ops"><button onclick="closeMove()">取消</button><button class="primary" onclick="doMove()">确定</button></div></div></div>
+<div id="lightbox" onclick="if(event.target===this)closeLB()">
+<div class="lb-name" id="lbname"></div>
+<img id="lbimg" alt="">
+<div class="lb-bar">
+<button class="primary" onclick="lbDl()">⬇️ 下载</button>
+<button onclick="lbShare()">🔗 分享</button>
+<button class="danger" onclick="lbDel()">🗑️ 删除</button>
+<button onclick="closeLB()">✖ 关闭</button>
+</div></div>
 <script>
 var prefix="";
+var viewMode="list";try{viewMode=localStorage.getItem("pan_view")||"list";}catch(e){}
+function isImg(n){return /\.(jpe?g|png|gif|webp|bmp|svg|heic|heif)$/i.test(n||"");}
+function toggleView(){viewMode=(viewMode==="grid")?"list":"grid";try{localStorage.setItem("pan_view",viewMode);}catch(e){}refresh();}
+function openLB(key,name){var lb=document.getElementById("lightbox");document.getElementById("lbimg").src="/api/download?mode=view&key="+encodeURIComponent(key);document.getElementById("lbname").textContent=name||"";lb.setAttribute("data-key",key);lb.setAttribute("data-name",name||"");lb.classList.add("show");}
+function closeLB(){var lb=document.getElementById("lightbox");lb.classList.remove("show");document.getElementById("lbimg").src="";}
+async function lbDl(){var lb=document.getElementById("lightbox");location.href="/api/download?key="+encodeURIComponent(lb.getAttribute("data-key"));}
+async function lbShare(){var lb=document.getElementById("lightbox");var key=lb.getAttribute("data-key");var hours=prompt("分享链接有效期（小时，最长 720）：","24");if(!hours)return;try{var d=await api("/api/share?key="+encodeURIComponent(key)+"&hours="+encodeURIComponent(hours));if(navigator.clipboard){await navigator.clipboard.writeText(d.url);alert("分享链接已复制到剪贴板，有效期至 "+new Date(d.exp*1000).toLocaleString());}else{prompt("复制分享链接：",d.url);}}catch(e){setStatus("操作失败："+e.message);}}
+async function lbDel(){var lb=document.getElementById("lightbox");var key=lb.getAttribute("data-key"),name=lb.getAttribute("data-name");if(!confirm("确定删除「"+name+"」？"))return;try{await api("/api/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:key})});closeLB();refresh();}catch(e){setStatus("操作失败："+e.message);}}
+document.addEventListener("keydown",function(e){if(e.key==="Escape")closeLB();});
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function fmtSize(b){if(b<1024)return b+" B";if(b<1048576)return (b/1024).toFixed(1)+" KB";if(b<1073741824)return (b/1048576).toFixed(1)+" MB";return (b/1073741824).toFixed(2)+" GB";}
 function fmtDate(s){try{return new Date(s).toLocaleString();}catch(e){return "";}}
@@ -116,19 +152,37 @@ async function refresh(){
   parts.forEach(function(p){acc+=p+"/";bc+=' / <a href="#" data-p="'+esc(acc)+'">'+esc(p)+"</a>";});
   var crumb=document.getElementById("crumb");crumb.innerHTML=bc;
   crumb.querySelectorAll("a").forEach(function(a){a.onclick=function(e){e.preventDefault();prefix=a.getAttribute("data-p");refresh();};});
+  var vb=document.getElementById("viewbtn");
+  if(vb) vb.textContent=(viewMode==="grid")?"📋 列表视图":"🖼️ 相册视图";
+  lastFolders=d.folders||[];
   var h="";
   d.folders.forEach(function(f){
     h+='<div class="row"><span class="name">📁 '+esc(f)+'</span><span class="meta"></span><span class="acts"><button data-act="enter" data-key="'+esc(prefix+f+"/")+'">进入</button></span></div>';
   });
-  d.files.forEach(function(f){
-    h+='<div class="row"><span class="name">📄 '+esc(f.name)+'</span><span class="meta">'+fmtSize(f.size)+" · "+fmtDate(f.uploaded)+'</span><span class="acts">'
-      +'<button data-act="dl" data-key="'+esc(f.key)+'">下载</button>'
-      +'<button data-act="share" data-key="'+esc(f.key)+'" data-name="'+esc(f.name)+'">分享</button>'
-      +'<button class="danger" data-act="del" data-key="'+esc(f.key)+'" data-name="'+esc(f.name)+'">删除</button></span></div>';
-  });
+  if(viewMode==="grid"){
+    var imgs=d.files.filter(function(f){return isImg(f.name);});
+    var rest=d.files.filter(function(f){return !isImg(f.name);});
+    if(imgs.length){
+      h+='<div id="grid">';
+      imgs.forEach(function(f){
+        h+='<div class="tile" data-key="'+esc(f.key)+'" data-name="'+esc(f.name)+'"><img loading="lazy" src="/api/download?mode=view&key='+encodeURIComponent(f.key)+'" alt=""><div class="tname">'+esc(f.name)+'</div></div>';
+      });
+      h+='</div>';
+    }
+    rest.forEach(function(f){h+=fileRow(f);});
+  }else{
+    d.files.forEach(function(f){h+=fileRow(f);});
+  }
   if(!h) h='<div class="empty">空空如也，上传点文件吧 📤</div>';
   document.getElementById("list").innerHTML=h;
   setStatus("");
+}
+function fileRow(f){
+  return '<div class="row"><span class="name">📄 '+esc(f.name)+'</span><span class="meta">'+fmtSize(f.size)+" · "+fmtDate(f.uploaded)+'</span><span class="acts">'
+    +'<button data-act="dl" data-key="'+esc(f.key)+'">下载</button>'
+    +'<button data-act="share" data-key="'+esc(f.key)+'" data-name="'+esc(f.name)+'">分享</button>'
+    +'<button data-act="move" data-key="'+esc(f.key)+'" data-name="'+esc(f.name)+'">移动</button>'
+    +'<button class="danger" data-act="del" data-key="'+esc(f.key)+'" data-name="'+esc(f.name)+'">删除</button></span></div>';
 }
 document.getElementById("list").addEventListener("click",async function(e){
   var b=e.target.closest("button");if(!b)return;
@@ -143,7 +197,11 @@ document.getElementById("list").addEventListener("click",async function(e){
       if(navigator.clipboard){await navigator.clipboard.writeText(d.url);alert("分享链接已复制到剪贴板，有效期至 "+new Date(d.exp*1000).toLocaleString());}
       else{prompt("复制分享链接：",d.url);}
     }
+    else if(act==="move"){openMove(key,name);}
   }catch(err){setStatus("操作失败："+err.message);}
+});
+document.getElementById("list").addEventListener("click",function(e){
+  var t=e.target.closest(".tile");if(t)openLB(t.getAttribute("data-key"),t.getAttribute("data-name"));
 });
 async function uploadFiles(files){
   if(!files||!files.length)return;
@@ -168,6 +226,33 @@ async function mkdir(){
   catch(e){setStatus("创建失败："+e.message);}
 }
 async function logout(){await fetch("/api/logout",{method:"POST"});location.href="/";}
+var moveKey="",moveName="",lastFolders=[];
+function openMove(key,name){
+  moveKey=key;moveName=name;
+  document.getElementById("movetitle").textContent="把「"+name+"」移动到：";
+  var h='<button class="frow" data-f="">🏠 根目录</button>';
+  lastFolders.forEach(function(f){h+='<button class="frow" data-f="'+esc(prefix+f+"/")+'">📁 '+esc(f)+'</button>';});
+  var mf=document.getElementById("movefolders");mf.innerHTML=h;
+  mf.querySelectorAll("button").forEach(function(b){b.onclick=function(){doMoveTo(b.getAttribute("data-f"));};});
+  document.getElementById("movepath").value="";
+  document.getElementById("movemodal").style.display="flex";
+}
+function closeMove(){document.getElementById("movemodal").style.display="none";}
+async function doMoveTo(folder){
+  var manual=document.getElementById("movepath").value.trim();
+  if(manual){folder=manual;if(folder.charAt(folder.length-1)!=="/")folder+="/";}
+  try{
+    setStatus("移动中…");
+    await api("/api/move",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:moveKey,folder:folder})});
+    closeMove();setStatus("✅ 已移动到 "+(folder||"根目录"));refresh();
+  }catch(e){setStatus("❌ 移动失败："+e.message);}
+}
+function doMove(){
+  var manual=document.getElementById("movepath").value.trim();
+  if(!manual){setStatus("请先点选文件夹，或在输入框手动输入目标文件夹");return;}
+  doMoveTo(manual);
+}
+document.getElementById("movemodal").addEventListener("click",function(e){if(e.target.id==="movemodal")closeMove();});
 refresh();
 </script></body></html>`;
 
@@ -227,10 +312,12 @@ async function handleApi(request, env, url) {
     if (!obj) return new Response("Not found", { status: 404 });
     const headers = new Headers();
     obj.writeHttpMetadata(headers);
+    const view = url.searchParams.get("mode") === "view";
     headers.set(
       "Content-Disposition",
-      "attachment; filename*=UTF-8''" + encodeURIComponent(key.split("/").pop())
+      (view ? "inline" : "attachment") + "; filename*=UTF-8''" + encodeURIComponent(key.split("/").pop())
     );
+    if (view) headers.set("Cache-Control", "public, max-age=86400");
     return new Response(obj.body, { headers });
   }
 
@@ -248,6 +335,24 @@ async function handleApi(request, env, url) {
     if (!name || name.includes("/")) return json({ ok: false, msg: "名称不合法" }, 400);
     await env.BUCKET.put(prefix + name + "/", new Uint8Array(0));
     return json({ ok: true });
+  }
+
+  if (path === "/api/move" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const key = body.key || "";
+    let folder = (body.folder || "").trim();
+    if (!key) return json({ ok: false, msg: "缺少 key" }, 400);
+    if (key.endsWith("/")) return json({ ok: false, msg: "暂不支持移动文件夹" }, 400);
+    if (folder && !folder.endsWith("/")) folder += "/";
+    const name = key.split("/").pop();
+    const dest = folder + name;
+    if (dest === key) return json({ ok: false, msg: "已经在这个文件夹里了" }, 400);
+    if (await env.BUCKET.head(dest)) return json({ ok: false, msg: "目标文件夹里已有同名文件" }, 409);
+    const obj = await env.BUCKET.get(key);
+    if (!obj) return json({ ok: false, msg: "文件不存在" }, 404);
+    await env.BUCKET.put(dest, obj.body, { httpMetadata: obj.httpMetadata });
+    await env.BUCKET.delete(key);
+    return json({ ok: true, dest });
   }
 
   if (path === "/api/share") {
